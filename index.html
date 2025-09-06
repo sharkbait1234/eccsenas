@@ -1,0 +1,205 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Arraste o dedo para ver a mágica</title>
+  <style>
+    :root{background:#000}
+    html,body{height:100%;margin:0}
+    #stage{width:100vw;height:100vh;display:flex;align-items:center;justify-content:center;background:#000}
+    canvas{display:block;width:100%;height:100%;touch-action:none}
+    #hint{
+      position:fixed;left:50%;top:50%;transform:translate(-50%,-50%);color:#DDD;font-family:system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial;pointer-events:none;
+      font-size:22px;text-align:center;mix-blend-mode:screen;}
+    #hint.small{font-size:18px}
+    #credits{position:fixed;left:8px;bottom:8px;color:#666;font-size:13px}
+  </style>
+</head>
+<body>
+  <!-- Coloque o arquivo da imagem (a ilustração) na mesma pasta com o nome picnic.png -->
+  <img id="source" src="sena.png" alt="picnic" style="display:none">
+
+  <div id="stage">
+    <canvas id="reveal"></canvas>
+  </div>
+  <div id="hint">Arraste o dedo para ver a mágica</div>
+  <div id="credits">Toque/arraste para revelar — deslize até aparecer tudo</div>
+
+  <script>
+  const CONFIG = {
+    cellSize: 14,
+    revealRadius: 2,
+    smoothing: true,
+  };
+
+  const canvas = document.getElementById('reveal');
+  const ctx = canvas.getContext('2d');
+  const img = document.getElementById('source');
+  const hint = document.getElementById('hint');
+
+  let gridCols, gridRows, cellW, cellH;
+  let revealed;
+  let imageScale = 1, imageOffsetX = 0, imageOffsetY = 0;
+
+  function fitCanvas() {
+    const dpr = window.devicePixelRatio || 1;
+    const cssW = canvas.clientWidth || window.innerWidth;
+    const cssH = canvas.clientHeight || window.innerHeight;
+    canvas.width = Math.round(cssW * dpr);
+    canvas.height = Math.round(cssH * dpr);
+    canvas.style.width = cssW + 'px';
+    canvas.style.height = cssH + 'px';
+    ctx.setTransform(dpr,0,0,dpr,0,0);
+  }
+
+  function setupGrid() {
+    const cssW = canvas.clientWidth || window.innerWidth;
+    const cssH = canvas.clientHeight || window.innerHeight;
+    const cell = Math.max(6, CONFIG.cellSize);
+    gridCols = Math.ceil(cssW / cell);
+    gridRows = Math.ceil(cssH / cell);
+    cellW = cssW / gridCols;
+    cellH = cssH / gridRows;
+    revealed = new Array(gridCols * gridRows).fill(false);
+  }
+
+  function computeImagePlacement() {
+    const cssW = canvas.clientWidth || window.innerWidth;
+    const cssH = canvas.clientHeight || window.innerHeight;
+    const iw = img.naturalWidth;
+    const ih = img.naturalHeight;
+    if (!iw || !ih) return;
+
+    // usar max → cobre toda a tela (pode cortar bordas)
+    const scale = Math.max(cssW / iw, cssH / ih);
+    imageScale = scale;
+
+    const drawW = iw * scale;
+    const drawH = ih * scale;
+
+    imageOffsetX = (cssW - drawW) / 2;
+    imageOffsetY = (cssH - drawH) / 2;
+  }
+
+  function draw() {
+    ctx.fillStyle = '#000';
+    ctx.fillRect(0,0,canvas.clientWidth,canvas.clientHeight);
+
+    const iw = img.naturalWidth, ih = img.naturalHeight;
+    for (let r=0;r<gridRows;r++){
+      for (let c=0;c<gridCols;c++){
+        const i = r*gridCols + c;
+        if (revealed[i]){
+          const x = c * cellW;
+          const y = r * cellH;
+          const w = Math.ceil(cellW);
+          const h = Math.ceil(cellH);
+
+          const relX = x - imageOffsetX;
+          const relY = y - imageOffsetY;
+          if (relX + w < 0 || relY + h < 0 || relX > iw*imageScale || relY > ih*imageScale) {
+            continue;
+          }
+
+          const sx = Math.max(0, Math.floor(relX / imageScale));
+          const sy = Math.max(0, Math.floor(relY / imageScale));
+          const sw = Math.max(1, Math.ceil(w / imageScale));
+          const sh = Math.max(1, Math.ceil(h / imageScale));
+
+          ctx.drawImage(img, sx, sy, sw, sh, x, y, w, h);
+        }
+      }
+    }
+  }
+
+  function revealAt(pageX, pageY) {
+    const cssRect = canvas.getBoundingClientRect();
+    const x = pageX - cssRect.left;
+    const y = pageY - cssRect.top;
+    const col = Math.floor(x / cellW);
+    const row = Math.floor(y / cellH);
+
+    for (let dy=-CONFIG.revealRadius; dy<=CONFIG.revealRadius; dy++){
+      for (let dx=-CONFIG.revealRadius; dx<=CONFIG.revealRadius; dx++){
+        const nc = col + dx;
+        const nr = row + dy;
+        if (nc>=0 && nc<gridCols && nr>=0 && nr<gridRows){
+          const idx = nr*gridCols + nc;
+          if (!revealed[idx]){
+            revealed[idx] = true;
+          }
+        }
+      }
+    }
+    draw();
+    updateHintVisibility();
+  }
+
+  function updateHintVisibility(){
+    const total = revealed.length;
+    const shown = revealed.reduce((s,v)=>s+(v?1:0),0);
+    const pct = Math.round((shown/total)*100);
+    if (pct>0){
+      hint.style.opacity = '0';
+      hint.style.transition = 'opacity 500ms ease';
+    }
+    if (pct>=100){
+      hint.remove();
+    }
+  }
+
+  function handlePointerStart(e){
+    e.preventDefault();
+    const points = getPointsFromEvent(e);
+    points.forEach(p => revealAt(p.x,p.y));
+  }
+  function handlePointerMove(e){
+    e.preventDefault();
+    const points = getPointsFromEvent(e);
+    points.forEach(p => revealAt(p.x,p.y));
+  }
+
+  function getPointsFromEvent(e){
+    const pts = [];
+    if (e.touches && e.touches.length){
+      for (let i=0;i<e.touches.length;i++){
+        pts.push({x:e.touches[i].clientX,y:e.touches[i].clientY});
+      }
+    } else if (e.changedTouches && e.changedTouches.length){
+      for (let i=0;i<e.changedTouches.length;i++){
+        pts.push({x:e.changedTouches[i].clientX,y:e.changedTouches[i].clientY});
+      }
+    } else {
+      pts.push({x:e.clientX,y:e.clientY});
+    }
+    return pts;
+  }
+
+  canvas.addEventListener('touchstart', handlePointerStart, {passive:false});
+  canvas.addEventListener('touchmove', handlePointerMove, {passive:false});
+  canvas.addEventListener('mousedown', handlePointerStart);
+  canvas.addEventListener('mousemove', (e)=>{ if (e.buttons) handlePointerMove(e); });
+
+  window.addEventListener('resize', ()=>{
+    fitCanvas();
+    setupGrid();
+    computeImagePlacement();
+    draw();
+  });
+
+  img.addEventListener('load', ()=>{
+    fitCanvas();
+    setupGrid();
+    computeImagePlacement();
+    draw();
+  });
+
+  if (img.complete && img.naturalWidth){
+    img.dispatchEvent(new Event('load'));
+  }
+
+  console.log('Arraste o dedo na tela (mobile) ou clique e arraste (desktop) para revelar a imagem.\nColoque o arquivo da imagem na mesma pasta chamado picnic.png.');
+  </script>
+</body>
+</html>
